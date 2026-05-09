@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: drama-bot
+    runtime: docker
+    plan: free
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_ID
+        sync: false
+      - key: TMDB_API_KEY
+        sync: false
+      - key: MODE
+        value: webhook
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: PORT
+        value: 10000
