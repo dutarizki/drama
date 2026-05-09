@@ -51,13 +51,12 @@ async def drama_view_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     poster = drama.get("poster_url", "")
     if poster:
         try:
-            # Hapus pesan lama, kirim foto baru dengan caption
             await query.message.delete()
             await query.message.chat.send_photo(
                 photo=poster, caption=text, parse_mode="MarkdownV2", reply_markup=kb)
             return
         except Exception:
-            pass  # Fallback ke text
+            pass
 
     await query.edit_message_text(text, parse_mode="MarkdownV2", reply_markup=kb)
 
@@ -90,10 +89,11 @@ async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     drama = await get_drama(ep["drama_id"])
     title = esc(drama["title"]) if drama else "Unknown"
+    url = ep['url']  # URL tidak di-esc, langsung pakai
     text = (f"🎬 *{title}*\n"
             f"📺 Episode {ep['episode_number']}\n"
             f"━━━━━━━━━━━━━━\n\n"
-            f"▶️ [Klik untuk Menonton]({esc(ep['url'])})\n")
+            f"▶️ [Klik untuk Menonton]({url})\n")
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔙 Daftar Episode", callback_data=f"{CB_EPISODE_LIST}:{ep['drama_id']}:1")],
         [InlineKeyboardButton("🏠 Menu Utama", callback_data=CB_BACK_MAIN)],
