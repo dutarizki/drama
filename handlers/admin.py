@@ -174,11 +174,11 @@ async def add_drama_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["new_drama"] = drama_data
 
     # Show preview
-    rating_str = f"⭐ {drama_data['rating']:.1f}/10" if drama_data['rating'] else ""
+    rating_str = f"⭐ {esc(str(round(drama_data['rating'], 1)))}\\/10" if drama_data['rating'] else ""
     text = (f"✅ *Konfirmasi Drama*\n━━━━━━━━━━━━━━\n\n"
             f"📝 {esc(drama_data['title'])}\n"
             f"{rating_str}\n"
-            f"📅 {esc(drama_data['year'])}\n"
+            f"📅 {esc(str(drama_data['year']))}\n"
             f"🎭 {esc(drama_data['genre'])}\n"
             f"🖼️ Poster: {'✅' if drama_data['poster_url'] else '❌'}\n\n"
             f"Simpan drama ini?")
