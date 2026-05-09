@@ -15,9 +15,10 @@ def format_drama_info(drama, episode_count=0):
     text += "━━━━━━━━━━━━━━━━━━━━\n"
 
     if rating:
-        text += f"⭐ Rating: {rating:.1f}/10 {stars}\n"
+        rating_display = esc(str(round(float(rating), 1)))
+        text += f"⭐ Rating: {rating_display}/10 {stars}\n"
     if drama.get("year"):
-        text += f"📅 Tahun: {esc(drama['year'])}\n"
+        text += f"📅 Tahun: {esc(str(drama['year']))}\n"
     if drama.get("genre"):
         text += f"🎭 Genre: {esc(drama['genre'])}\n"
     text += f"📊 Status: {status_emoji} {esc(drama.get('status', 'Unknown'))}\n"
@@ -36,7 +37,7 @@ def _rating_stars(rating):
     """Convert rating to star display."""
     if not rating:
         return ""
-    filled = int(rating / 2)
+    filled = int(float(rating) / 2)
     return "★" * filled + "☆" * (5 - filled)
 
 
