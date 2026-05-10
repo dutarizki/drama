@@ -1,24 +1,22 @@
-"""Database handler - SQLite + aiosqlite. Simplified: no resolution, 1 episode = 1 link."""
+"""Database handler - PostgreSQL + asyncpg untuk Supabase."""
 
-import aiosqlite
+import asyncpg
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "drama_bot.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 
 async def get_db():
-    db = await aiosqlite.connect(DB_PATH)
-    db.row_factory = aiosqlite.Row
-    await db.execute("PRAGMA foreign_keys = ON")
-    return db
+    conn = await asyncpg.connect(DATABASE_URL)
+    return conn
 
 
 async def init_db():
-    db = await get_db()
+    conn = await get_db()
     try:
-        await db.executescript("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS dramas (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 title TEXT NOT NULL,
                 original_title TEXT DEFAULT '',
                 description TEXT DEFAULT '',
@@ -33,27 +31,25 @@ async def init_db():
             );
 
             CREATE TABLE IF NOT EXISTS episodes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                drama_id INTEGER NOT NULL,
+                id SERIAL PRIMARY KEY,
+                drama_id INTEGER NOT NULL REFERENCES dramas(id) ON DELETE CASCADE,
                 episode_number INTEGER NOT NULL,
                 url TEXT NOT NULL DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (drama_id) REFERENCES dramas(id) ON DELETE CASCADE,
                 UNIQUE(drama_id, episode_number)
             );
 
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                telegram_id INTEGER UNIQUE NOT NULL,
+                id SERIAL PRIMARY KEY,
+                telegram_id BIGINT UNIQUE NOT NULL,
                 username TEXT DEFAULT '',
                 first_name TEXT DEFAULT '',
                 first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        await db.commit()
     finally:
-        await db.close()
+        await conn.close()
 
 
 # =====================
@@ -62,74 +58,66 @@ async def init_db():
 
 async def add_drama(title, original_title="", description="", genre="", year="",
                     status="Ongoing", poster_url="", rating=0, vote_count=0, tmdb_id=0):
-    db = await get_db()
+    conn = await get_db()
     try:
-        cursor = await db.execute(
+        row = await conn.fetchrow(
             """INSERT INTO dramas (title, original_title, description, genre, year,
                status, poster_url, rating, vote_count, tmdb_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (title, original_title, description, genre, year, status, poster_url, rating, vote_count, tmdb_id)
-        )
-        await db.commit()
-        return cursor.lastrowid
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id""",
+            title, original_title, description, genre, year,
+            status, poster_url, rating, vote_count, tmdb_id)
+        return row["id"]
     finally:
-        await db.close()
+        await conn.close()
 
 
 async def get_drama(drama_id):
-    db = await get_db()
+    conn = await get_db()
     try:
-        cursor = await db.execute("SELECT * FROM dramas WHERE id = ?", (drama_id,))
-        row = await cursor.fetchone()
+        row = await conn.fetchrow("SELECT * FROM dramas WHERE id = $1", drama_id)
         return dict(row) if row else None
     finally:
-        await db.close()
+        await conn.close()
 
 
 async def list_dramas(page=1, page_size=8):
-    db = await get_db()
+    conn = await get_db()
     try:
         offset = (page - 1) * page_size
-        cursor = await db.execute("SELECT COUNT(*) as count FROM dramas")
-        row = await cursor.fetchone()
-        total = row["count"]
-        cursor = await db.execute(
-            "SELECT * FROM dramas ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            (page_size, offset))
-        rows = await cursor.fetchall()
+        total = await conn.fetchval("SELECT COUNT(*) FROM dramas")
+        rows = await conn.fetch(
+            "SELECT * FROM dramas ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+            page_size, offset)
         return [dict(r) for r in rows], total
     finally:
-        await db.close()
+        await conn.close()
 
 
 async def search_dramas(query):
-    db = await get_db()
+    conn = await get_db()
     try:
-        cursor = await db.execute(
-            "SELECT * FROM dramas WHERE title LIKE ? OR original_title LIKE ? ORDER BY title",
-            (f"%{query}%", f"%{query}%"))
-        rows = await cursor.fetchall()
+        rows = await conn.fetch(
+            "SELECT * FROM dramas WHERE title ILIKE $1 OR original_title ILIKE $1 ORDER BY title",
+            f"%{query}%")
         return [dict(r) for r in rows]
     finally:
-        await db.close()
+        await conn.close()
 
 
 async def get_dramas_by_genre(genre):
-    db = await get_db()
+    conn = await get_db()
     try:
-        cursor = await db.execute(
-            "SELECT * FROM dramas WHERE genre LIKE ? ORDER BY title", (f"%{genre}%",))
-        rows = await cursor.fetchall()
+        rows = await conn.fetch(
+            "SELECT * FROM dramas WHERE genre ILIKE $1 ORDER BY title", f"%{genre}%")
         return [dict(r) for r in rows]
     finally:
-        await db.close()
+        await conn.close()
 
 
 async def get_all_genres():
-    db = await get_db()
+    conn = await get_db()
     try:
-        cursor = await db.execute("SELECT DISTINCT genre FROM dramas WHERE genre != '' ORDER BY genre")
-        rows = await cursor.fetchall()
+        rows = await conn.fetch("SELECT DISTINCT genre FROM dramas WHERE genre != '' ORDER BY genre")
         genres = set()
         for row in rows:
             for g in row["genre"].split(","):
@@ -138,26 +126,24 @@ async def get_all_genres():
                     genres.add(g)
         return sorted(genres)
     finally:
-        await db.close()
+        await conn.close()
 
 
 async def delete_drama(drama_id):
-    db = await get_db()
+    conn = await get_db()
     try:
-        await db.execute("DELETE FROM dramas WHERE id = ?", (drama_id,))
-        await db.commit()
+        await conn.execute("DELETE FROM dramas WHERE id = $1", drama_id)
     finally:
-        await db.close()
+        await conn.close()
 
 
 async def get_all_dramas():
-    db = await get_db()
+    conn = await get_db()
     try:
-        cursor = await db.execute("SELECT id, title FROM dramas ORDER BY title")
-        rows = await cursor.fetchall()
+        rows = await conn.fetch("SELECT id, title FROM dramas ORDER BY title")
         return [dict(r) for r in rows]
     finally:
-        await db.close()
+        await conn.close()
 
 
 # =====================
@@ -165,46 +151,43 @@ async def get_all_dramas():
 # =====================
 
 async def add_episode(drama_id, episode_number, url=""):
-    db = await get_db()
+    conn = await get_db()
     try:
-        cursor = await db.execute(
-            """INSERT INTO episodes (drama_id, episode_number, url) VALUES (?, ?, ?)
-               ON CONFLICT(drama_id, episode_number) DO UPDATE SET url = excluded.url""",
-            (drama_id, episode_number, url))
-        await db.commit()
-        return cursor.lastrowid
+        row = await conn.fetchrow(
+            """INSERT INTO episodes (drama_id, episode_number, url) VALUES ($1,$2,$3)
+               ON CONFLICT(drama_id, episode_number) DO UPDATE SET url = EXCLUDED.url
+               RETURNING id""",
+            drama_id, episode_number, url)
+        return row["id"]
     finally:
-        await db.close()
+        await conn.close()
 
 
 async def get_episodes(drama_id):
-    db = await get_db()
+    conn = await get_db()
     try:
-        cursor = await db.execute(
-            "SELECT * FROM episodes WHERE drama_id = ? ORDER BY episode_number", (drama_id,))
-        rows = await cursor.fetchall()
+        rows = await conn.fetch(
+            "SELECT * FROM episodes WHERE drama_id = $1 ORDER BY episode_number", drama_id)
         return [dict(r) for r in rows]
     finally:
-        await db.close()
+        await conn.close()
 
 
 async def get_episode(episode_id):
-    db = await get_db()
+    conn = await get_db()
     try:
-        cursor = await db.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,))
-        row = await cursor.fetchone()
+        row = await conn.fetchrow("SELECT * FROM episodes WHERE id = $1", episode_id)
         return dict(row) if row else None
     finally:
-        await db.close()
+        await conn.close()
 
 
 async def delete_episode(episode_id):
-    db = await get_db()
+    conn = await get_db()
     try:
-        await db.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
-        await db.commit()
+        await conn.execute("DELETE FROM episodes WHERE id = $1", episode_id)
     finally:
-        await db.close()
+        await conn.close()
 
 
 # =====================
@@ -212,29 +195,26 @@ async def delete_episode(episode_id):
 # =====================
 
 async def track_user(telegram_id, username="", first_name=""):
-    db = await get_db()
+    conn = await get_db()
     try:
-        await db.execute(
+        await conn.execute(
             """INSERT INTO users (telegram_id, username, first_name)
-               VALUES (?, ?, ?)
+               VALUES ($1,$2,$3)
                ON CONFLICT(telegram_id) DO UPDATE SET
-               username = excluded.username,
-               first_name = excluded.first_name,
+               username = EXCLUDED.username,
+               first_name = EXCLUDED.first_name,
                last_seen = CURRENT_TIMESTAMP""",
-            (telegram_id, username, first_name))
-        await db.commit()
+            telegram_id, username, first_name)
     finally:
-        await db.close()
+        await conn.close()
 
 
 async def get_stats():
-    db = await get_db()
+    conn = await get_db()
     try:
-        stats = {}
-        for table, key in [("dramas", "dramas"), ("episodes", "episodes"), ("users", "users")]:
-            cursor = await db.execute(f"SELECT COUNT(*) as count FROM {table}")
-            row = await cursor.fetchone()
-            stats[key] = row["count"]
-        return stats
+        dramas = await conn.fetchval("SELECT COUNT(*) FROM dramas")
+        episodes = await conn.fetchval("SELECT COUNT(*) FROM episodes")
+        users = await conn.fetchval("SELECT COUNT(*) FROM users")
+        return {"dramas": dramas, "episodes": episodes, "users": users}
     finally:
-        await db.close()
+        await conn.close()
