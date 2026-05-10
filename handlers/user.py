@@ -79,7 +79,8 @@ async def episode_list_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Klik episode → langsung kirim link."""
+    """Klik episode → kirim link ke player HTML."""
+    import urllib.parse
     query = update.callback_query
     await query.answer()
     ep_id = int(query.data.split(":")[1])
@@ -88,20 +89,30 @@ async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Link belum tersedia", show_alert=True)
         return
     drama = await get_drama(ep["drama_id"])
-    title = esc(drama["title"]) if drama else "Unknown"
-    url = ep['url']  # URL tidak di-esc, langsung pakai
-    text = (f"🎬 *{title}*\n"
-            f"📺 Episode {ep['episode_number']}\n"
+    drama_title = drama["title"] if drama else "Drama"
+    ep_num = ep['episode_number']
+
+    # Buat link ke GitHub Pages player
+    base_url = "https://dutarizki.github.io/drama/player.html"
+    player_url = (
+        f"{base_url}"
+        f"?src={urllib.parse.quote(ep['url'], safe='')}"
+        f"&title={urllib.parse.quote(drama_title, safe='')}"
+        f"&ep={ep_num}"
+    )
+
+    title_esc = esc(drama_title)
+    text = (f"🎬 *{title_esc}*\n"
+            f"📺 Episode {ep_num}\n"
             f"━━━━━━━━━━━━━━\n\n"
-            f"▶️ [Klik untuk Menonton]({url})\n\n"
-            f"💡 *Tips Fullscreen:*\n"
-            f"Buka link di *browser HP/PC* untuk fullscreen\\.\n"
-            f"Di Telegram Web tidak support fullscreen\\.")
+            f"▶️ [Klik untuk Menonton]({player_url})\n\n"
+            f"💡 Tap link di atas untuk nonton fullscreen tanpa gangguan\\!")
     kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ Tonton Sekarang", url=player_url)],
         [InlineKeyboardButton("🔙 Daftar Episode", callback_data=f"{CB_EPISODE_LIST}:{ep['drama_id']}:1")],
         [InlineKeyboardButton("🏠 Menu Utama", callback_data=CB_BACK_MAIN)],
     ])
-    await query.message.reply_text(text, parse_mode="MarkdownV2", reply_markup=kb, disable_web_page_preview=False)
+    await query.message.reply_text(text, parse_mode="MarkdownV2", reply_markup=kb, disable_web_page_preview=True)
 
 
 async def genre_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
