@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Drama Player</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    background: #000;
+    color: #fff;
+    font-family: 'Segoe UI', sans-serif;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Header */
+  #header {
+    background: linear-gradient(to bottom, rgba(0,0,0,0.9), transparent);
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    z-index: 10;
+    transition: opacity 0.3s;
+  }
+
+  #header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #header span {
+    font-size: 13px;
+    color: #e50914;
+    font-weight: 700;
+    background: rgba(229,9,20,0.15);
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
+  /* Player */
+  #player-wrap {
+    width: 100%;
+    height: 100vh;
+    position: relative;
+  }
+
+  iframe#player {
+    width: 100%;
+    height: 100%;
+    border: none;
+    display: block;
+  }
+
+  /* Fullscreen button */
+  #fs-btn {
+    position: fixed;
+    bottom: 20px;
+    right: 16px;
+    z-index: 100;
+    background: rgba(229,9,20,0.9);
+    color: #fff;
+    border: none;
+    border-radius: 50px;
+    padding: 10px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 4px 15px rgba(229,9,20,0.4);
+    backdrop-filter: blur(4px);
+    transition: all 0.2s;
+  }
+
+  #fs-btn:active { transform: scale(0.95); }
+
+  /* Loading overlay */
+  #loading {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    gap: 16px;
+    transition: opacity 0.5s;
+  }
+
+  #loading .logo {
+    font-size: 28px;
+    font-weight: 800;
+    color: #e50914;
+    letter-spacing: 2px;
+  }
+
+  #loading .spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid rgba(255,255,255,0.1);
+    border-top-color: #e50914;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  #loading p {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  #loading.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loading">
+  <div class="logo">🎬 DRAMA</div>
+  <div class="spinner"></div>
+  <p>Memuat video...</p>
+</div>
+
+<!-- Header -->
+<div id="header">
+  <h1 id="drama-title">Loading...</h1>
+  <span id="ep-label">Ep 1</span>
+</div>
+
+<!-- Player -->
+<div id="player-wrap">
+  <iframe id="player" allowfullscreen allow="fullscreen; autoplay" scrolling="no"></iframe>
+</div>
+
+<!-- Fullscreen Button -->
+<button id="fs-btn" onclick="goFullscreen()">
+  ⛶ Fullscreen
+</button>
+
+<script>
+  // Ambil parameter dari URL
+  const params = new URLSearchParams(window.location.search);
+  const src = params.get("src") || "";
+  const title = params.get("title") || "Drama";
+  const ep = params.get("ep") || "1";
+
+  // Set info
+  document.getElementById("drama-title").textContent = decodeURIComponent(title);
+  document.getElementById("ep-label").textContent = "Ep " + ep;
+  document.title = decodeURIComponent(title) + " - Ep " + ep;
+
+  // Load iframe
+  const iframe = document.getElementById("player");
+  if (src) {
+    iframe.src = decodeURIComponent(src);
+    iframe.onload = () => {
+      setTimeout(() => {
+        document.getElementById("loading").classList.add("hidden");
+      }, 1000);
+    };
+  } else {
+    document.getElementById("loading").querySelector("p").textContent = "❌ Link tidak ditemukan";
+  }
+
+  // Fullscreen
+  function goFullscreen() {
+    const el = document.getElementById("player-wrap");
+    if (el.requestFullscreen) el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    else if (el.mozRequestFullScreen) el.mozRequestFullScreen();
+    else if (iframe.requestFullscreen) iframe.requestFullscreen();
+  }
+
+  // Auto hide header
+  let hideTimer;
+  document.addEventListener("touchstart", () => {
+    document.getElementById("header").style.opacity = "1";
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      document.getElementById("header").style.opacity = "0";
+    }, 3000);
+  });
+</script>
+</body>
+</html>
