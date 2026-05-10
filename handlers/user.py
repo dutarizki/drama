@@ -93,7 +93,10 @@ async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (f"🎬 *{title}*\n"
             f"📺 Episode {ep['episode_number']}\n"
             f"━━━━━━━━━━━━━━\n\n"
-            f"▶️ [Klik untuk Menonton]({url})\n")
+            f"▶️ [Klik untuk Menonton]({url})\n\n"
+            f"💡 *Tips Fullscreen:*\n"
+            f"Buka link di *browser HP/PC* untuk fullscreen\\.\n"
+            f"Di Telegram Web tidak support fullscreen\\.")
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔙 Daftar Episode", callback_data=f"{CB_EPISODE_LIST}:{ep['drama_id']}:1")],
         [InlineKeyboardButton("🏠 Menu Utama", callback_data=CB_BACK_MAIN)],
