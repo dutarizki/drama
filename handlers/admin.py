@@ -105,6 +105,9 @@ async def add_drama_tmdb_search(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=confirm_keyboard("confirm_add_drama", CB_CANCEL))
         return ADD_CONFIRM
 
+    # Simpan judul yang diketik user
+    context.user_data["user_title"] = q
+
     # Search TMDB
     await update.message.reply_text("🔍 Mencari di TMDB\\.\\.\\.", parse_mode="MarkdownV2")
 
@@ -160,7 +163,7 @@ async def add_drama_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TY
         genres = await get_genre_names(r["genre_ids"], r["media_type"])
 
     drama_data = {
-        "title": r["title"],
+        "title": context.user_data.get("user_title", r["title"]),  # pakai judul yang diketik user
         "original_title": r.get("original_title", ""),
         "description": r.get("overview", ""),
         "genre": genres,
