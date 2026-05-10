@@ -1,10 +1,11 @@
 """
-Flask Webhook + Player + Proxy untuk Railway.
+Flask Webhook + Player + Proxy + Ad Blocker untuk Railway.
 """
 
 import asyncio
 import logging
 import urllib.parse
+import re
 import requests as req_lib
 from flask import Flask, request, Response, render_template_string
 from telegram import Update
@@ -29,6 +30,127 @@ async def process_update(update_json):
         await ptb_app.initialize()
         update = Update.de_json(update_json, ptb_app.bot)
         await ptb_app.process_update(update)
+
+
+# Domain iklan yang diblokir
+AD_DOMAINS = [
+    'doubleclick.net', 'googlesyndication.com', 'googleadservices.com',
+    'adservice.google.com', 'amazon-adsystem.com', 'ads.yahoo.com',
+    'adsrvr.org', 'adnxs.com', 'rubiconproject.com', 'openx.net',
+    'pubmatic.com', 'taboola.com', 'outbrain.com', 'revcontent.com',
+    'mgid.com', 'adform.net', 'criteo.com', 'serving-sys.com',
+    'moatads.com', 'scorecardresearch.com', 'quantserve.com',
+    'popads.net', 'popcash.net', 'propellerads.com', 'adcash.com',
+    'exoclick.com', 'juicyads.com', 'trafficjunky.com', 'ero-advertising.com',
+    'plugrush.com', 'hilltopads.net', 'adsterra.com', 'richpush.co',
+    'clickadu.com', 'admaven.com', 'zeropark.com', 'traffic-media.co',
+    'adxpansion.com', 'adspyglass.com', 'adskeeper.co.uk',
+]
+
+# Pattern script iklan
+AD_SCRIPT_PATTERNS = [
+    r'<script[^>]*src=["\'][^"\']*(?:' + '|'.join([
+        'pop', 'push', 'ads?[.-]', 'advert', 'banner', 'sponsor',
+        'adsense', 'adserver', 'adnetwork', 'admanager', 'dfp',
+        'pagead', 'adsbygoogle', 'prebid', 'gpt\.js', 'pubads',
+        'interstitial', 'overlay', 'popup', 'popunder',
+    ]) + r'])[^"\']*["\'][^>]*>.*?</script>',
+    r'<ins\s+class=["\']adsbygoogle["\'][^>]*>.*?</ins>',
+    r'<!--\s*(?:Ad|Advertisement|Sponsored)\s*-->.*?<!--\s*End\s*(?:Ad|Advertisement)\s*-->',
+    r'<div[^>]*(?:id|class)=["\'][^"\']*(?:ad[-_]|[-_]ad|advert|banner|sponsor|popup|overlay|interstitial)[^"\']*["\'][^>]*>.*?</div>',
+]
+
+# JS yang diblokir (inline)
+AD_JS_PATTERNS = [
+    r'(?:window\.open|open)\s*\([^)]*(?:http|//)[^)]*\)',
+    r'popunder\s*\(',
+    r'popup\s*\(',
+    r'document\.createElement\s*\(\s*["\']script["\']\s*\)[^;]*(?:' + '|'.join(AD_DOMAINS[:10]) + r')',
+]
+
+
+def strip_ads(html_content):
+    """Strip iklan dari konten HTML."""
+    content = html_content
+
+    # 1. Blokir script dari domain iklan
+    for domain in AD_DOMAINS:
+        domain_escaped = domain.replace('.', r'\.')
+        pattern = rf'<script[^>]*src=["\'][^"\']*{domain_escaped}[^"\']*["\'][^>]*>.*?</script>'
+        content = re.sub(pattern, '', content, flags=re.IGNORECASE | re.DOTALL)
+        # Juga blokir link/img dari domain iklan
+        pattern2 = rf'<(?:link|img|iframe)[^>]*(?:href|src)=["\'][^"\']*{domain_escaped}[^"\']*["\'][^>]*/?>'
+        content = re.sub(pattern2, '', content, flags=re.IGNORECASE)
+
+    # 2. Hapus script iklan berdasarkan pattern
+    for pattern in AD_SCRIPT_PATTERNS:
+        content = re.sub(pattern, '', content, flags=re.IGNORECASE | re.DOTALL)
+
+    # 3. Inject CSS untuk sembunyikan elemen iklan + blokir popup
+    ad_css = """
+<style>
+/* Ad Blocker */
+[id*="ad-"],[id*="-ad"],[id*="ads-"],[id*="-ads"],
+[class*="ad-"],[class*="-ad"],[class*="ads-"],[class*="-ads"],
+[id*="banner"],[class*="banner"],
+[id*="popup"],[class*="popup"],
+[id*="overlay"],[class*="overlay"],
+[id*="interstitial"],[class*="interstitial"],
+[id*="sponsor"],[class*="sponsor"],
+ins.adsbygoogle, .ad-container, .ad-wrapper,
+.advertisement, .advertise, #ad, .ad {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  height: 0 !important;
+  width: 0 !important;
+  overflow: hidden !important;
+}
+/* Pastikan video tetap fullscreen */
+video { width: 100% !important; height: 100% !important; }
+</style>
+<script>
+/* Blokir window.open (popup/popunder) */
+window.open = function() { return null; };
+window.alert = function() {};
+/* Blokir setTimeout yang biasanya dipakai popup */
+const _origTimeout = window.setTimeout;
+window.setTimeout = function(fn, delay) {
+  if (typeof fn === 'string' && (fn.includes('open') || fn.includes('pop'))) return;
+  return _origTimeout(fn, delay);
+};
+/* Observer untuk hapus elemen iklan yang muncul dinamis */
+const adObserver = new MutationObserver(function(mutations) {
+  mutations.forEach(function(m) {
+    m.addedNodes.forEach(function(node) {
+      if (node.nodeType === 1) {
+        const id = (node.id || '').toLowerCase();
+        const cls = (node.className || '').toLowerCase();
+        if (id.includes('ad') || cls.includes('ad') || 
+            id.includes('popup') || cls.includes('popup') ||
+            id.includes('overlay') || cls.includes('overlay') ||
+            id.includes('banner') || cls.includes('banner')) {
+          node.style.display = 'none';
+          node.style.visibility = 'hidden';
+        }
+      }
+    });
+  });
+});
+adObserver.observe(document.documentElement, { childList: true, subtree: true });
+</script>
+"""
+    # Inject sebelum </head> atau di awal body
+    if '</head>' in content:
+        content = content.replace('</head>', ad_css + '</head>', 1)
+    elif '<body' in content:
+        content = re.sub(r'(<body[^>]*>)', r'\1' + ad_css, content, count=1, flags=re.IGNORECASE)
+    else:
+        content = ad_css + content
+
+    return content
+
 
 PLAYER_HTML = """<!DOCTYPE html>
 <html lang="id">
@@ -123,9 +245,17 @@ def proxy():
         excluded = ['content-encoding', 'content-length', 'transfer-encoding',
                     'connection', 'x-frame-options', 'content-security-policy']
         response_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
-        return Response(resp.content, status=resp.status_code,
-                        content_type=resp.headers.get('content-type', 'text/html'),
-                        headers=response_headers)
+
+        content_type = resp.headers.get('content-type', '')
+        if 'text/html' in content_type:
+            content = strip_ads(resp.text)
+            return Response(content, status=resp.status_code,
+                           content_type=content_type,
+                           headers=response_headers)
+        else:
+            return Response(resp.content, status=resp.status_code,
+                           content_type=content_type,
+                           headers=response_headers)
     except Exception as e:
         return f"Error: {str(e)}", 500
 
