@@ -1,6 +1,5 @@
-"""Handler user: browse, search, watch. Simplified - no resolution, direct link."""
+"""Handler user: browse, search, watch."""
 
-import urllib.parse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from config import (
@@ -17,8 +16,6 @@ from utils.keyboard import (
     genre_list_keyboard, search_result_keyboard
 )
 from utils.helpers import format_drama_info, esc
-
-PLAYER_BASE_URL = "https://drama-bot-production.up.railway.app/player"
 
 
 async def drama_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -78,7 +75,7 @@ async def episode_list_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Klik episode → buka via Railway player (fullscreen, no ads)."""
+    """Klik episode → kirim link langsung."""
     query = update.callback_query
     await query.answer()
     ep_id = int(query.data.split(":")[1])
@@ -87,23 +84,17 @@ async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Link belum tersedia", show_alert=True)
         return
     drama = await get_drama(ep["drama_id"])
-    drama_title = drama["title"] if drama else "Drama"
+    title_esc = esc(drama["title"]) if drama else "Unknown"
     ep_num = ep['episode_number']
+    url = ep['url']
 
-    player_url = (
-        f"{PLAYER_BASE_URL}"
-        f"?src={urllib.parse.quote(ep['url'], safe='')}"
-        f"&title={urllib.parse.quote(drama_title, safe='')}"
-        f"&ep={ep_num}"
-    )
-
-    title_esc = esc(drama_title)
     text = (f"🎬 *{title_esc}*\n"
             f"📺 Episode {ep_num}\n"
             f"━━━━━━━━━━━━━━\n\n"
-            f"Tap tombol di bawah untuk nonton fullscreen\\!")
+            f"Tap tombol di bawah untuk menonton\\.\n\n"
+            f"💡 *Tips:* Buka di browser HP untuk fullscreen penuh\\!")
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ Tonton Sekarang", url=player_url)],
+        [InlineKeyboardButton("▶️ Tonton di Browser", url=url)],
         [InlineKeyboardButton("🔙 Daftar Episode", callback_data=f"{CB_EPISODE_LIST}:{ep['drama_id']}:1")],
         [InlineKeyboardButton("🏠 Menu Utama", callback_data=CB_BACK_MAIN)],
     ])
