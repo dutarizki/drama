@@ -36,7 +36,7 @@ PLAYER_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>{{ title }} - Ep {{ ep }}</title>
+<title>{{ title }} Ep{{ ep }}</title>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -62,7 +62,7 @@ video{width:100%;height:100%;object-fit:contain;background:#000}
 @keyframes spin{to{transform:rotate(360deg)}}
 #loading.hidden{display:none}
 #err{position:fixed;inset:0;background:#000;display:none;flex-direction:column;
-  align-items:center;justify-content:center;color:#fff;font-family:sans-serif;gap:12px}
+  align-items:center;justify-content:center;color:#fff;font-family:sans-serif;gap:12px;text-align:center;padding:20px}
 #err.show{display:flex}
 </style>
 </head>
@@ -74,14 +74,14 @@ video{width:100%;height:100%;object-fit:contain;background:#000}
 <div id="err">
   <span style="font-size:32px">😞</span>
   <p style="font-size:15px">Video tidak dapat dimuat</p>
-  <p style="font-size:12px;color:rgba(255,255,255,.5)" id="errMsg"></p>
+  <p style="font-size:12px;color:rgba(255,255,255,.5);margin-top:8px" id="errMsg"></p>
 </div>
 <div id="info">
   <span>{{ title }}</span>
   <span id="ep-badge">Ep {{ ep }}</span>
 </div>
 <div id="wrap">
-  <video id="vid" playsinline webkit-playsinline controls></video>
+  <video id="vid" playsinline webkit-playsinline controls crossorigin="anonymous"></video>
 </div>
 <div id="controls">
   <button id="fsBtn" onclick="fs()">⛶ Fullscreen</button>
@@ -103,27 +103,49 @@ function initPlayer(){
     var hls = new Hls({
       enableWorker: true,
       lowLatencyMode: false,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 60,
     });
     hls.loadSource(src);
     hls.attachMedia(vid);
-    hls.on(Hls.Events.MANIFEST_PARSED, function(){
+    hls.on(Hls.Events.MANIFEST_PARSED, function(e, data){
       loading.classList.add('hidden');
+      // Pilih quality tertinggi yang support H.264
+      var levels = data.levels;
+      var best = -1;
+      for(var i=0;i<levels.length;i++){
+        var codec = levels[i].videoCodec || '';
+        // Prefer H.264 (avc1) bukan H.265 (hvc1/hev1)
+        if(codec.indexOf('avc1')!==-1 || codec==='' ){
+          if(best===-1 || levels[i].height > levels[best].height) best=i;
+        }
+      }
+      if(best!==-1) hls.currentLevel = best;
       vid.play().catch(function(){});
     });
     hls.on(Hls.Events.ERROR, function(e, data){
-      if(data.fatal) showErr(data.type + ': ' + data.details);
+      if(data.fatal){
+        if(data.type === Hls.ErrorTypes.NETWORK_ERROR){
+          hls.startLoad();
+        } else if(data.type === Hls.ErrorTypes.MEDIA_ERROR){
+          hls.recoverMediaError();
+        } else {
+          showErr(data.details);
+        }
+      }
     });
   } else if(vid.canPlayType('application/vnd.apple.mpegurl')){
+    // Safari / iOS native HLS
     vid.src = src;
     vid.addEventListener('loadedmetadata', function(){
       loading.classList.add('hidden');
       vid.play().catch(function(){});
     });
     vid.addEventListener('error', function(){
-      showErr('Format tidak didukung browser ini');
+      showErr('Format tidak didukung');
     });
   } else {
-    showErr('Browser tidak support HLS');
+    showErr('Browser tidak support HLS. Gunakan Chrome atau Safari.');
   }
 }
 
@@ -133,6 +155,7 @@ function fs(){
   var el = document.getElementById('wrap');
   if(el.requestFullscreen) el.requestFullscreen();
   else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  else if(el.mozRequestFullScreen) el.mozRequestFullScreen();
   else if(vid.webkitEnterFullscreen) vid.webkitEnterFullscreen();
 }
 
@@ -149,6 +172,7 @@ function showControls(){
 }
 document.addEventListener('touchstart', showControls);
 document.addEventListener('mousemove', showControls);
+showControls();
 </script>
 </body>
 </html>"""
@@ -169,7 +193,6 @@ def watch():
 
 @app.route("/proxy", methods=["GET"])
 def proxy():
-    """Proxy untuk file m3u8 dan ts supaya bypass hotlink."""
     url = request.args.get("url", "")
     if not url:
         return "URL tidak ditemukan", 400
@@ -178,14 +201,12 @@ def proxy():
         headers = {
             "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
             "Referer": referer,
-            "Origin": urllib.parse.urlparse(referer).scheme + "://" + urllib.parse.urlparse(referer).netloc,
         }
         resp = req_lib.get(url, headers=headers, timeout=20, stream=True)
         excluded = ['content-encoding','transfer-encoding','connection',
                     'x-frame-options','content-security-policy']
         resp_headers = {k:v for k,v in resp.headers.items() if k.lower() not in excluded}
         resp_headers['Access-Control-Allow-Origin'] = '*'
-        
         return Response(resp.iter_content(chunk_size=8192),
                        status=resp.status_code,
                        content_type=resp.headers.get('content-type','application/octet-stream'),
