@@ -211,7 +211,17 @@ async def admin_drama_list_callback(update: Update, context: ContextTypes.DEFAUL
         await _safe_edit(query, "📋 Belum ada drama\\.", admin_menu_keyboard())
         return
     text = f"📋 *Daftar Drama*\n━━━━━━━━━━━━━━\n\nTotal: {total} drama\nPilih untuk kelola:"
-    await _safe_edit(query, text, drama_list_keyboard(dramas, page, total, admin=True))
+    await _safe_edit(
+    query,
+    text,
+    drama_list_keyboard(
+        dramas,
+        page,
+        total,
+        prefix=CB_ADMIN_DRAMA_SELECT,
+        admin=True
+    )
+)
 
 
 async def admin_drama_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
