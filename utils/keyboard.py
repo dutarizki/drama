@@ -32,7 +32,7 @@ def admin_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-def drama_list_keyboard(dramas, page, total, page_size=PAGE_SIZE, prefix=CB_DRAMA_VIEW):
+def drama_list_keyboard(dramas, page, total, page_size=PAGE_SIZE, prefix=CB_DRAMA_VIEW, admin=False):
     keyboard = []
     for drama in dramas:
         emoji = "🟢" if drama.get("status") == STATUS_ONGOING else "🔵"
@@ -46,7 +46,7 @@ def drama_list_keyboard(dramas, page, total, page_size=PAGE_SIZE, prefix=CB_DRAM
 
     total_pages = max(1, (total + page_size - 1) // page_size)
     nav_buttons = []
-    list_prefix = CB_ADMIN_DRAMA_LIST if prefix == CB_ADMIN_DRAMA_SELECT else CB_DRAMA_LIST
+    list_prefix = CB_ADMIN_DRAMA_LIST if admin else CB_DRAMA_LIST
 
     if page > 1:
         nav_buttons.append(InlineKeyboardButton("⬅️", callback_data=f"{list_prefix}:{page - 1}"))
