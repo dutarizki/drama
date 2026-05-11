@@ -1,4 +1,4 @@
-"""Handler user: browse, search, watch. Simplified - no resolution, direct link."""
+"""Handler user: browse, search, watch."""
 
 import urllib.parse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -18,7 +18,7 @@ from utils.keyboard import (
 )
 from utils.helpers import format_drama_info, esc
 
-PLAYER_BASE_URL = "https://drama-bot-production.up.railway.app/watch"
+RAILWAY_URL = "https://drama-bot-production.up.railway.app"
 
 
 async def drama_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -78,7 +78,7 @@ async def episode_list_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Klik episode → buka via Railway player (fullscreen, no ads)."""
+    """Klik episode → buka di HLS player."""
     query = update.callback_query
     await query.answer()
     ep_id = int(query.data.split(":")[1])
@@ -89,10 +89,11 @@ async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     drama = await get_drama(ep["drama_id"])
     drama_title = drama["title"] if drama else "Drama"
     ep_num = ep['episode_number']
+    src_url = ep['url']
 
     player_url = (
-        f"{PLAYER_BASE_URL}"
-        f"?src={urllib.parse.quote(ep['url'], safe='')}"
+        f"{RAILWAY_URL}/watch"
+        f"?src={urllib.parse.quote(src_url, safe='')}"
         f"&title={urllib.parse.quote(drama_title, safe='')}"
         f"&ep={ep_num}"
     )
@@ -101,7 +102,7 @@ async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (f"🎬 *{title_esc}*\n"
             f"📺 Episode {ep_num}\n"
             f"━━━━━━━━━━━━━━\n\n"
-            f"Tap tombol di bawah untuk nonton fullscreen\\!")
+            f"Tap tombol untuk nonton fullscreen tanpa iklan\\!")
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("▶️ Tonton Sekarang", url=player_url)],
         [InlineKeyboardButton("🔙 Daftar Episode", callback_data=f"{CB_EPISODE_LIST}:{ep['drama_id']}:1")],
