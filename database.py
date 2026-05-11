@@ -35,6 +35,9 @@ async def init_db():
                 drama_id INTEGER NOT NULL REFERENCES dramas(id) ON DELETE CASCADE,
                 episode_number INTEGER NOT NULL,
                 url TEXT NOT NULL DEFAULT '',
+                url_360p TEXT DEFAULT '',
+                url_480p TEXT DEFAULT '',
+                url_720p TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(drama_id, episode_number)
             );
@@ -48,13 +51,15 @@ async def init_db():
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # Tambah kolom resolusi jika belum ada (untuk database lama)
+        for col in ['url_360p', 'url_480p', 'url_720p']:
+            try:
+                await conn.execute(f"ALTER TABLE episodes ADD COLUMN IF NOT EXISTS {col} TEXT DEFAULT ''")
+            except Exception:
+                pass
     finally:
         await conn.close()
 
-
-# =====================
-#   DRAMA OPERATIONS
-# =====================
 
 async def add_drama(title, original_title="", description="", genre="", year="",
                     status="Ongoing", poster_url="", rating=0, vote_count=0, tmdb_id=0):
@@ -146,18 +151,21 @@ async def get_all_dramas():
         await conn.close()
 
 
-# =====================
-#   EPISODE OPERATIONS
-# =====================
-
-async def add_episode(drama_id, episode_number, url=""):
+async def add_episode(drama_id, episode_number, url="", url_360p="", url_480p="", url_720p=""):
     conn = await get_db()
     try:
+        # Gunakan url terbaik sebagai url utama
+        main_url = url_720p or url_480p or url_360p or url
         row = await conn.fetchrow(
-            """INSERT INTO episodes (drama_id, episode_number, url) VALUES ($1,$2,$3)
-               ON CONFLICT(drama_id, episode_number) DO UPDATE SET url = EXCLUDED.url
+            """INSERT INTO episodes (drama_id, episode_number, url, url_360p, url_480p, url_720p)
+               VALUES ($1,$2,$3,$4,$5,$6)
+               ON CONFLICT(drama_id, episode_number) DO UPDATE SET
+               url = EXCLUDED.url,
+               url_360p = EXCLUDED.url_360p,
+               url_480p = EXCLUDED.url_480p,
+               url_720p = EXCLUDED.url_720p
                RETURNING id""",
-            drama_id, episode_number, url)
+            drama_id, episode_number, main_url, url_360p, url_480p, url_720p)
         return row["id"]
     finally:
         await conn.close()
@@ -189,10 +197,6 @@ async def delete_episode(episode_id):
     finally:
         await conn.close()
 
-
-# =====================
-#   USER TRACKING
-# =====================
 
 async def track_user(telegram_id, username="", first_name=""):
     conn = await get_db()
