@@ -1,4 +1,4 @@
-"""Handler user: browse, search, watch."""
+"""Handler user: browse, search, watch dengan pilihan resolusi."""
 
 import urllib.parse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -78,37 +78,79 @@ async def episode_list_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def watch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Klik episode → buka di HLS player."""
+    """Klik episode → tampilkan pilihan resolusi."""
     query = update.callback_query
     await query.answer()
     ep_id = int(query.data.split(":")[1])
     ep = await get_episode(ep_id)
-    if not ep or not ep.get("url"):
-        await query.answer("❌ Link belum tersedia", show_alert=True)
+    if not ep:
+        await query.answer("❌ Episode tidak ditemukan", show_alert=True)
         return
     drama = await get_drama(ep["drama_id"])
     drama_title = drama["title"] if drama else "Drama"
     ep_num = ep['episode_number']
-    src_url = ep['url']
-
-    player_url = (
-        f"{RAILWAY_URL}/watch"
-        f"?src={urllib.parse.quote(src_url, safe='')}"
-        f"&title={urllib.parse.quote(drama_title, safe='')}"
-        f"&ep={ep_num}"
-    )
-
     title_esc = esc(drama_title)
+
+    # Cek resolusi yang tersedia
+    resolutions = []
+    if ep.get("url_360p"):
+        resolutions.append(("360p", ep["url_360p"]))
+    if ep.get("url_480p"):
+        resolutions.append(("480p", ep["url_480p"]))
+    if ep.get("url_720p"):
+        resolutions.append(("720p", ep["url_720p"]))
+
+    # Fallback ke url utama jika tidak ada resolusi
+    if not resolutions and ep.get("url"):
+        resolutions.append(("Default", ep["url"]))
+
+    if not resolutions:
+        await query.answer("❌ Link belum tersedia", show_alert=True)
+        return
+
+    # Kalau hanya 1 resolusi, langsung buka player
+    if len(resolutions) == 1:
+        label, src_url = resolutions[0]
+        player_url = (
+            f"{RAILWAY_URL}/watch"
+            f"?src={urllib.parse.quote(src_url, safe='')}"
+            f"&title={urllib.parse.quote(drama_title, safe='')}"
+            f"&ep={ep_num}"
+        )
+        text = (f"🎬 *{title_esc}*\n"
+                f"📺 Episode {ep_num}\n"
+                f"━━━━━━━━━━━━━━\n\n"
+                f"Tap untuk nonton fullscreen tanpa iklan\\!")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"▶️ Tonton ({label})", url=player_url)],
+            [InlineKeyboardButton("🔙 Daftar Episode", callback_data=f"{CB_EPISODE_LIST}:{ep['drama_id']}:1")],
+            [InlineKeyboardButton("🏠 Menu Utama", callback_data=CB_BACK_MAIN)],
+        ])
+        await query.message.reply_text(text, parse_mode="MarkdownV2", reply_markup=kb, disable_web_page_preview=True)
+        return
+
+    # Tampilkan pilihan resolusi
     text = (f"🎬 *{title_esc}*\n"
             f"📺 Episode {ep_num}\n"
             f"━━━━━━━━━━━━━━\n\n"
-            f"Tap tombol untuk nonton fullscreen tanpa iklan\\!")
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ Tonton Sekarang", url=player_url)],
-        [InlineKeyboardButton("🔙 Daftar Episode", callback_data=f"{CB_EPISODE_LIST}:{ep['drama_id']}:1")],
-        [InlineKeyboardButton("🏠 Menu Utama", callback_data=CB_BACK_MAIN)],
-    ])
-    await query.message.reply_text(text, parse_mode="MarkdownV2", reply_markup=kb, disable_web_page_preview=True)
+            f"Pilih kualitas video:")
+
+    kb = []
+    quality_labels = {"360p": "📱 360p", "480p": "💻 480p", "720p": "🖥️ 720p HD", "Default": "▶️ Tonton"}
+    for label, src_url in resolutions:
+        player_url = (
+            f"{RAILWAY_URL}/watch"
+            f"?src={urllib.parse.quote(src_url, safe='')}"
+            f"&title={urllib.parse.quote(drama_title, safe='')}"
+            f"&ep={ep_num}"
+        )
+        kb.append([InlineKeyboardButton(quality_labels.get(label, label), url=player_url)])
+
+    kb.append([InlineKeyboardButton("🔙 Daftar Episode", callback_data=f"{CB_EPISODE_LIST}:{ep['drama_id']}:1")])
+    kb.append([InlineKeyboardButton("🏠 Menu Utama", callback_data=CB_BACK_MAIN)])
+
+    await query.message.reply_text(text, parse_mode="MarkdownV2",
+        reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True)
 
 
 async def genre_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
