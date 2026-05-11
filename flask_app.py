@@ -103,9 +103,6 @@ function initPlayer(){
     var hls = new Hls({
       enableWorker: true,
       lowLatencyMode: false,
-      xhrSetup: function(xhr, url){
-        xhr.setRequestHeader('Origin', '');
-      }
     });
     hls.loadSource(src);
     hls.attachMedia(vid);
