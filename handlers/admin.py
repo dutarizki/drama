@@ -1,4 +1,4 @@
-"""Handler admin: CRUD drama (TMDB auto-fetch), upload episode links."""
+"""Handler admin: CRUD drama (TMDB auto-fetch), upload episode links dengan multi-resolusi."""
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
@@ -46,10 +46,6 @@ async def admin_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await _safe_edit(query, "👑 *Panel Admin*\n━━━━━━━━━━━━━━\n\nPilih menu:", admin_menu_keyboard())
 
 
-# ========================
-#   STATS
-# ========================
-
 async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not is_admin(query.from_user.id):
@@ -64,10 +60,6 @@ async def stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _safe_edit(query, esc(text.replace("*","BM")).replace("BM","*"),
         InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin", callback_data=CB_ADMIN_MENU)]]))
 
-
-# ========================
-#   ADD DRAMA (TMDB AUTO)
-# ========================
 
 async def add_drama_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -85,10 +77,7 @@ async def add_drama_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_drama_tmdb_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cari drama di TMDB."""
     q = update.message.text.strip()
-
-    # Manual mode
     if q.lower().startswith("manual:"):
         title = q[7:].strip()
         if not title:
@@ -105,27 +94,18 @@ async def add_drama_tmdb_search(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=confirm_keyboard("confirm_add_drama", CB_CANCEL))
         return ADD_CONFIRM
 
-    # Simpan judul yang diketik user
     context.user_data["user_title"] = q
-
-    # Search TMDB
     await update.message.reply_text("🔍 Mencari di TMDB\\.\\.\\.", parse_mode="MarkdownV2")
-
-    # Search both TV and movie
     results = await search_tmdb(q, "tv")
     if not results:
         results = await search_tmdb(q, "movie")
-
     if not results:
         await update.message.reply_text(
             "😕 Tidak ditemukan di TMDB\\.\n\nCoba lagi atau ketik `manual:Judul` untuk input manual\\.",
             parse_mode="MarkdownV2", reply_markup=cancel_keyboard())
         return TMDB_SEARCH
 
-    # Store results
     context.user_data["tmdb_results"] = results
-
-    # Show results
     kb = []
     for i, r in enumerate(results):
         year = f" ({r['year']})" if r.get("year") else ""
@@ -133,7 +113,6 @@ async def add_drama_tmdb_search(update: Update, context: ContextTypes.DEFAULT_TY
         label = f"{r['title']}{year}{rating}"
         kb.append([InlineKeyboardButton(label, callback_data=f"tmdb_sel:{i}")])
     kb.append([InlineKeyboardButton("❌ Batal", callback_data=CB_CANCEL)])
-
     await update.message.reply_text(
         "🔍 *Hasil TMDB*\n━━━━━━━━━━━━━━\n\nPilih drama:",
         parse_mode="MarkdownV2", reply_markup=InlineKeyboardMarkup(kb))
@@ -141,29 +120,22 @@ async def add_drama_tmdb_search(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def add_drama_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User pilih drama dari hasil TMDB."""
     query = update.callback_query
     await query.answer()
-
     if query.data == CB_CANCEL:
         return await cancel_conversation(update, context)
-
     idx = int(query.data.split(":")[1])
     results = context.user_data.get("tmdb_results", [])
     if idx >= len(results):
         await query.edit_message_text("❌ Error\\.", parse_mode="MarkdownV2", reply_markup=admin_menu_keyboard())
         return ConversationHandler.END
-
     r = results[idx]
-
-    # Get detail for genres
     detail = await get_tmdb_detail(r["tmdb_id"], r["media_type"])
     genres = detail.get("genres", "") if detail else ""
     if not genres and r.get("genre_ids"):
         genres = await get_genre_names(r["genre_ids"], r["media_type"])
-
     drama_data = {
-        "title": context.user_data.get("user_title", r["title"]),  # pakai judul yang diketik user
+        "title": context.user_data.get("user_title", r["title"]),
         "original_title": r.get("original_title", ""),
         "description": r.get("overview", ""),
         "genre": genres,
@@ -175,8 +147,6 @@ async def add_drama_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TY
         "tmdb_id": r.get("tmdb_id", 0),
     }
     context.user_data["new_drama"] = drama_data
-
-    # Show preview
     rating_str = f"⭐ {esc(str(round(drama_data['rating'], 1)))}\\/10" if drama_data['rating'] else ""
     text = (f"✅ *Konfirmasi Drama*\n━━━━━━━━━━━━━━\n\n"
             f"📝 {esc(drama_data['title'])}\n"
@@ -185,7 +155,6 @@ async def add_drama_tmdb_select(update: Update, context: ContextTypes.DEFAULT_TY
             f"🎭 {esc(drama_data['genre'])}\n"
             f"🖼️ Poster: {'✅' if drama_data['poster_url'] else '❌'}\n\n"
             f"Simpan drama ini?")
-
     await query.edit_message_text(text, parse_mode="MarkdownV2",
         reply_markup=confirm_keyboard("confirm_add_drama", CB_CANCEL))
     return ADD_CONFIRM
@@ -196,35 +165,39 @@ async def add_drama_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     if query.data == CB_CANCEL:
         return await cancel_conversation(update, context)
-
-    d = context.user_data.pop("new_drama", {})
-    context.user_data.pop("tmdb_results", None)
-
+    drama_data = context.user_data.get("new_drama", {})
+    if not drama_data:
+        await query.edit_message_text("❌ Data tidak ditemukan\\.", parse_mode="MarkdownV2",
+            reply_markup=admin_menu_keyboard())
+        return ConversationHandler.END
     drama_id = await add_drama(
-        title=d.get("title", ""), original_title=d.get("original_title", ""),
-        description=d.get("description", ""), genre=d.get("genre", ""),
-        year=d.get("year", ""), status=d.get("status", STATUS_ONGOING),
-        poster_url=d.get("poster_url", ""), rating=d.get("rating", 0),
-        vote_count=d.get("vote_count", 0), tmdb_id=d.get("tmdb_id", 0))
-
-    text = f"✅ *{esc(d.get('title',''))}* berhasil ditambahkan\\!"
-    await query.edit_message_text(text, parse_mode="MarkdownV2", reply_markup=admin_menu_keyboard())
+        title=drama_data["title"],
+        original_title=drama_data.get("original_title", ""),
+        description=drama_data.get("description", ""),
+        genre=drama_data.get("genre", ""),
+        year=str(drama_data.get("year", "")),
+        status=drama_data.get("status", STATUS_ONGOING),
+        poster_url=drama_data.get("poster_url", ""),
+        rating=drama_data.get("rating", 0),
+        vote_count=drama_data.get("vote_count", 0),
+        tmdb_id=drama_data.get("tmdb_id", 0),
+    )
+    context.user_data.pop("new_drama", None)
+    await query.edit_message_text(
+        f"✅ *{esc(drama_data['title'])}* berhasil ditambahkan\\!",
+        parse_mode="MarkdownV2", reply_markup=admin_menu_keyboard())
     return ConversationHandler.END
 
 
 async def cancel_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    context.user_data.pop("new_drama", None)
-    context.user_data.pop("new_episode", None)
-    context.user_data.pop("tmdb_results", None)
-    await query.edit_message_text("❌ Dibatalkan\\.", parse_mode="MarkdownV2", reply_markup=admin_menu_keyboard())
+    context.user_data.clear()
+    if update.callback_query:
+        await _safe_edit(update.callback_query, "❌ Dibatalkan\\.", admin_menu_keyboard())
+    else:
+        await update.message.reply_text("❌ Dibatalkan\\.", parse_mode="MarkdownV2",
+            reply_markup=admin_menu_keyboard())
     return ConversationHandler.END
 
-
-# ========================
-#   MANAGE DRAMAS
-# ========================
 
 async def admin_drama_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -235,11 +208,10 @@ async def admin_drama_list_callback(update: Update, context: ContextTypes.DEFAUL
     page = int(query.data.split(":")[1]) if ":" in query.data else 1
     dramas, total = await list_dramas(page=page, page_size=PAGE_SIZE)
     if not dramas:
-        await _safe_edit(query, "📋 Belum ada drama\\.",
-            InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin", callback_data=CB_ADMIN_MENU)]]))
+        await _safe_edit(query, "📋 Belum ada drama\\.", admin_menu_keyboard())
         return
-    await _safe_edit(query, "📋 *Kelola Drama*\n━━━━━━━━━━━━━━\n\nPilih drama:",
-        drama_list_keyboard(dramas, page, total, prefix=CB_ADMIN_DRAMA_SELECT))
+    text = f"📋 *Daftar Drama*\n━━━━━━━━━━━━━━\n\nTotal: {total} drama\nPilih untuk kelola:"
+    await _safe_edit(query, text, drama_list_keyboard(dramas, page, total, admin=True))
 
 
 async def admin_drama_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -254,8 +226,9 @@ async def admin_drama_select_callback(update: Update, context: ContextTypes.DEFA
         await _safe_edit(query, "❌ Drama tidak ditemukan\\.", admin_menu_keyboard())
         return
     episodes = await get_episodes(drama_id)
-    text = format_drama_info(drama, episode_count=len(episodes))
-    text += "\n\n⚙️ Pilih aksi:"
+    text = (f"🎬 *{esc(drama['title'])}*\n━━━━━━━━━━━━━━\n\n"
+            f"📺 Episode: {len(episodes)}\n"
+            f"📊 Status: {esc(drama.get('status',''))}\n")
     await _safe_edit(query, text, admin_drama_detail_keyboard(drama_id))
 
 
@@ -267,7 +240,7 @@ async def admin_drama_delete_callback(update: Update, context: ContextTypes.DEFA
     await query.answer()
     drama_id = int(query.data.split(":")[1])
     drama = await get_drama(drama_id)
-    text = f"🗑️ Hapus *{esc(drama['title'])}*?\n\n⚠️ Semua episode akan ikut terhapus\\!"
+    text = f"🗑️ Hapus *{esc(drama['title'])}*?\n\nSemua episode juga akan dihapus\\."
     await _safe_edit(query, text,
         confirm_keyboard(f"{CB_ADMIN_DRAMA_DELETE_CONFIRM}:{drama_id}", f"{CB_ADMIN_DRAMA_SELECT}:{drama_id}"))
 
@@ -284,10 +257,6 @@ async def admin_drama_delete_confirm(update: Update, context: ContextTypes.DEFAU
     await delete_drama(drama_id)
     await _safe_edit(query, f"✅ *{esc(title)}* dihapus\\.", admin_menu_keyboard())
 
-
-# ========================
-#   EPISODE LIST (ADMIN)
-# ========================
 
 async def admin_ep_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -340,7 +309,7 @@ async def admin_ep_delete_confirm(update: Update, context: ContextTypes.DEFAULT_
 
 
 # ========================
-#   ADD EPISODE (SIMPLIFIED)
+#   ADD EPISODE MULTI-RESOLUSI
 # ========================
 
 async def add_ep_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -349,7 +318,6 @@ async def add_ep_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌", show_alert=True)
         return ConversationHandler.END
     await query.answer()
-
     data = query.data.split(":")
     if len(data) > 1 and data[1]:
         drama_id = int(data[1])
@@ -359,12 +327,10 @@ async def add_ep_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📤 *Upload Episode*\n\nDrama: *{esc(drama['title'])}*\n\n📺 Masukkan nomor episode:",
             cancel_keyboard())
         return EP_NUMBER
-
     dramas = await get_all_dramas()
     if not dramas:
         await _safe_edit(query, "❌ Belum ada drama\\. Tambahkan dulu\\.", admin_menu_keyboard())
         return ConversationHandler.END
-
     kb = [[InlineKeyboardButton(d["title"], callback_data=f"epd:{d['id']}")] for d in dramas]
     kb.append([InlineKeyboardButton("❌ Batal", callback_data=CB_CANCEL)])
     await _safe_edit(query, "📤 *Upload Episode*\n━━━━━━━━━━━━━━\n\nPilih drama:", InlineKeyboardMarkup(kb))
@@ -380,15 +346,13 @@ async def add_ep_select_drama(update: Update, context: ContextTypes.DEFAULT_TYPE
     drama = await get_drama(drama_id)
     context.user_data["new_episode"] = {"drama_id": drama_id, "title": drama["title"]}
     await query.edit_message_text(
-        f"📤 *Upload Episode*\n\nDrama: *{esc(drama['title'])}*\n\n📺 Masukkan nomor episode\n\\(atau range, contoh: `1-16`\\):",
+        f"📤 *Upload Episode*\n\nDrama: *{esc(drama['title'])}*\n\n📺 Masukkan nomor episode\n\\(atau range, contoh: `1\\-16`\\):",
         parse_mode="MarkdownV2", reply_markup=cancel_keyboard())
     return EP_NUMBER
 
 
 async def add_ep_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-
-    # Support range like "1-16"
     if "-" in text:
         try:
             parts = text.split("-")
@@ -398,57 +362,90 @@ async def add_ep_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["new_episode"]["ep_index"] = 0
             ep_num = context.user_data["new_episode"]["ep_range"][0]
             context.user_data["new_episode"]["episode_number"] = ep_num
+            context.user_data["new_episode"]["resolution_step"] = "360p"
             title = context.user_data["new_episode"]["title"]
             await update.message.reply_text(
-                f"📤 *{esc(title)}*\n\nEpisode *{ep_num}*\n🔗 Paste link URL:",
+                f"📤 *{esc(title)}* \\- Episode *{ep_num}*\n\n🔗 Link *360p* \\(atau ketik `skip` untuk skip\\):",
                 parse_mode="MarkdownV2", reply_markup=cancel_keyboard())
             return EP_LINK
         except (ValueError, IndexError):
             await update.message.reply_text("❌ Format salah\\. Contoh: `1\\-16`", parse_mode="MarkdownV2",
                 reply_markup=cancel_keyboard())
             return EP_NUMBER
-
     try:
         ep_num = int(text)
     except ValueError:
         await update.message.reply_text("❌ Masukkan angka\\.", parse_mode="MarkdownV2", reply_markup=cancel_keyboard())
         return EP_NUMBER
-
     context.user_data["new_episode"]["episode_number"] = ep_num
+    context.user_data["new_episode"]["resolution_step"] = "360p"
     title = context.user_data["new_episode"]["title"]
     await update.message.reply_text(
-        f"📤 *{esc(title)}* \\- Episode *{ep_num}*\n\n🔗 Paste link URL:",
+        f"📤 *{esc(title)}* \\- Episode *{ep_num}*\n\n🔗 Link *360p* \\(atau ketik `skip` untuk skip\\):",
         parse_mode="MarkdownV2", reply_markup=cancel_keyboard())
     return EP_LINK
 
 
 async def add_ep_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
-    if not url.startswith("http"):
-        await update.message.reply_text("❌ URL harus http:// atau https://", reply_markup=cancel_keyboard())
+    ep_data = context.user_data.get("new_episode", {})
+    resolution_step = ep_data.get("resolution_step", "360p")
+
+    # Validasi URL (kecuali skip)
+    if url.lower() != "skip" and not url.startswith("http"):
+        await update.message.reply_text(
+            "❌ URL harus http:// atau https:// \\(atau ketik `skip`\\)",
+            parse_mode="MarkdownV2", reply_markup=cancel_keyboard())
         return EP_LINK
 
-    ep_data = context.user_data.get("new_episode", {})
-    drama_id = ep_data["drama_id"]
+    # Simpan link sesuai resolusi
+    if url.lower() == "skip":
+        url = ""
+    ep_data[f"url_{resolution_step}"] = url
+
     ep_num = ep_data["episode_number"]
+    title = ep_data["title"]
 
-    await add_episode(drama_id, ep_num, url)
+    # Tentukan resolusi berikutnya
+    next_steps = {"360p": "480p", "480p": "720p", "720p": None}
+    next_step = next_steps[resolution_step]
 
-    # Check if there's a range
+    if next_step:
+        ep_data["resolution_step"] = next_step
+        await update.message.reply_text(
+            f"✅ {resolution_step} disimpan\\!\n\n📤 *{esc(title)}* \\- Episode *{ep_num}*\n\n🔗 Link *{next_step}* \\(atau ketik `skip`\\):",
+            parse_mode="MarkdownV2", reply_markup=cancel_keyboard())
+        return EP_LINK
+
+    # Semua resolusi sudah diisi, simpan ke database
+    drama_id = ep_data["drama_id"]
+    url_360p = ep_data.get("url_360p", "")
+    url_480p = ep_data.get("url_480p", "")
+    url_720p = ep_data.get("url_720p", "")
+
+    await add_episode(drama_id, ep_num,
+                      url=url_720p or url_480p or url_360p,
+                      url_360p=url_360p,
+                      url_480p=url_480p,
+                      url_720p=url_720p)
+
+    # Cek range
     ep_range = ep_data.get("ep_range")
     if ep_range:
         idx = ep_data.get("ep_index", 0) + 1
         if idx < len(ep_range):
-            # Next episode in range
             ep_data["ep_index"] = idx
             next_ep = ep_range[idx]
             ep_data["episode_number"] = next_ep
+            ep_data["resolution_step"] = "360p"
+            ep_data.pop("url_360p", None)
+            ep_data.pop("url_480p", None)
+            ep_data.pop("url_720p", None)
             await update.message.reply_text(
-                f"✅ Ep {ep_num} disimpan\\!\n\n📤 *{esc(ep_data['title'])}* \\- Episode *{next_ep}*\n🔗 Paste link URL:",
+                f"✅ Ep {ep_num} disimpan\\!\n\n📤 *{esc(title)}* \\- Episode *{next_ep}*\n\n🔗 Link *360p* \\(atau `skip`\\):",
                 parse_mode="MarkdownV2", reply_markup=cancel_keyboard())
             return EP_LINK
         else:
-            # Range complete
             context.user_data.pop("new_episode", None)
             await update.message.reply_text(
                 f"✅ Semua episode \\({ep_range[0]}\\-{ep_range[-1]}\\) berhasil disimpan\\!",
@@ -457,13 +454,12 @@ async def add_ep_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.pop("new_episode", None)
     await update.message.reply_text(
-        f"✅ Episode {ep_num} berhasil disimpan\\!",
+        f"✅ Episode {ep_num} berhasil disimpan dengan {sum(1 for u in [url_360p,url_480p,url_720p] if u)} resolusi\\!",
         parse_mode="MarkdownV2", reply_markup=admin_menu_keyboard())
     return ConversationHandler.END
 
 
 async def _safe_edit(query, text, reply_markup):
-    """Edit message safely — handle photo messages."""
     try:
         await query.edit_message_text(text, parse_mode="MarkdownV2", reply_markup=reply_markup)
     except Exception:
