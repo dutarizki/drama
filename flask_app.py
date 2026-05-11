@@ -1,11 +1,10 @@
 """
-Flask Webhook + Smart Proxy + Ad Blocker untuk Railway.
+Flask Webhook + HLS Player untuk Railway.
 """
 
 import asyncio
 import logging
 import urllib.parse
-import re
 import requests as req_lib
 from flask import Flask, request, Response, render_template_string
 from telegram import Update
@@ -32,208 +31,130 @@ async def process_update(update_json):
         await ptb_app.process_update(update)
 
 
-AD_DOMAINS = [
-    'doubleclick.net', 'googlesyndication.com', 'googleadservices.com',
-    'adservice.google.com', 'amazon-adsystem.com', 'ads.yahoo.com',
-    'adsrvr.org', 'adnxs.com', 'rubiconproject.com', 'openx.net',
-    'pubmatic.com', 'taboola.com', 'outbrain.com', 'revcontent.com',
-    'mgid.com', 'adform.net', 'criteo.com', 'serving-sys.com',
-    'moatads.com', 'scorecardresearch.com', 'quantserve.com',
-    'popads.net', 'popcash.net', 'propellerads.com', 'adcash.com',
-    'exoclick.com', 'juicyads.com', 'trafficjunky.com', 'ero-advertising.com',
-    'plugrush.com', 'hilltopads.net', 'adsterra.com', 'richpush.co',
-    'clickadu.com', 'admaven.com', 'zeropark.com', 'traffic-media.co',
-    'adxpansion.com', 'adspyglass.com', 'adskeeper.co.uk',
-]
-
-AD_BLOCKER_JS = """
-<style>
-[id*="ad"],[class*="ad"],[id*="pop"],[class*="pop"],
-[id*="banner"],[class*="banner"],[id*="overlay"],[class*="overlay"],
-[id*="interstitial"],[class*="interstitial"],[id*="sponsor"],[class*="sponsor"],
-ins.adsbygoogle,.advertisement,.advertise {
-  display:none!important;visibility:hidden!important;
-  height:0!important;width:0!important;pointer-events:none!important;
-}
-body,html{margin:0;padding:0;background:#000;overflow:hidden;}
-video,iframe{width:100%!important;height:100%!important;}
-</style>
-<script>
-(function(){
-  // Blokir popup/popunder
-  window.open = function(){return {focus:function(){},blur:function(){}};};
-  window.alert = function(){};
-  window.confirm = function(){return false;};
-  
-  // Override setTimeout untuk blokir popup delay
-  var _st = window.setTimeout;
-  window.setTimeout = function(fn, d){
-    if(typeof fn==='string') return;
-    try{
-      var s = fn.toString();
-      if(s.includes('open(') || s.includes('popunder') || s.includes('popup')) return;
-    }catch(e){}
-    return _st(fn, d);
-  };
-
-  // Blokir script iklan yang di-inject
-  var _ce = document.createElement.bind(document);
-  document.createElement = function(tag){
-    var el = _ce(tag);
-    if(tag.toLowerCase()==='script'){
-      Object.defineProperty(el,'src',{
-        set:function(v){
-          var blocked = """ + str(AD_DOMAINS).replace("'", '"') + """;
-          for(var i=0;i<blocked.length;i++){
-            if(v && v.includes(blocked[i])) return;
-          }
-          Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype,'src').set.call(this,v);
-        },
-        get:function(){
-          return Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype,'src').get.call(this);
-        }
-      });
-    }
-    return el;
-  };
-
-  // Observer hapus iklan dinamis
-  var obs = new MutationObserver(function(ms){
-    ms.forEach(function(m){
-      m.addedNodes.forEach(function(n){
-        if(n.nodeType===1){
-          var id=(n.id||'').toLowerCase();
-          var cls=(n.className||'').toLowerCase();
-          if(id.match(/ad|pop|banner|overlay|interstitial|sponsor/) ||
-             cls.match(/ad|pop|banner|overlay|interstitial|sponsor/)){
-            n.remove();
-          }
-        }
-      });
-    });
-  });
-  obs.observe(document.documentElement,{childList:true,subtree:true});
-})();
-</script>
-"""
-
 PLAYER_HTML = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>{{ title }} Ep{{ ep }}</title>
+<title>{{ title }} - Ep {{ ep }}</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;background:#000;overflow:hidden}
-#wrap{width:100vw;height:100vh;position:relative}
-iframe{width:100%;height:100%;border:none;display:block}
-#info{position:fixed;top:0;left:0;right:0;padding:8px 12px;
-  background:linear-gradient(rgba(0,0,0,.8),transparent);
-  color:#fff;font-family:sans-serif;font-size:13px;font-weight:600;
+#wrap{width:100vw;height:100vh;position:relative;display:flex;align-items:center;justify-content:center}
+video{width:100%;height:100%;object-fit:contain;background:#000}
+#info{position:fixed;top:0;left:0;right:0;padding:10px 14px;
+  background:linear-gradient(rgba(0,0,0,.85),transparent);
+  color:#fff;font-family:sans-serif;font-size:14px;font-weight:600;
   z-index:99;display:flex;justify-content:space-between;align-items:center;
-  transition:opacity .3s}
-#ep{background:#e50914;padding:2px 8px;border-radius:4px;font-size:12px}
-#fsBtn{position:fixed;bottom:16px;right:16px;z-index:99;
-  background:#e50914;color:#fff;border:none;border-radius:24px;
-  padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;
-  box-shadow:0 2px 12px rgba(229,9,20,.5)}
+  transition:opacity .4s}
+#ep-badge{background:#e50914;padding:3px 10px;border-radius:4px;font-size:12px}
+#controls{position:fixed;bottom:0;left:0;right:0;padding:12px 14px;
+  background:linear-gradient(transparent,rgba(0,0,0,.85));
+  z-index:99;display:flex;align-items:center;gap:10px;
+  transition:opacity .4s}
+#fsBtn{margin-left:auto;background:#e50914;color:#fff;border:none;
+  border-radius:20px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer}
+#loading{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;z-index:50;gap:12px}
+.spinner{width:40px;height:40px;border:3px solid rgba(255,255,255,.1);
+  border-top-color:#e50914;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loading.hidden{display:none}
+#err{position:fixed;inset:0;background:#000;display:none;flex-direction:column;
+  align-items:center;justify-content:center;color:#fff;font-family:sans-serif;gap:12px}
+#err.show{display:flex}
 </style>
 </head>
 <body>
+<div id="loading">
+  <div class="spinner"></div>
+  <p style="color:rgba(255,255,255,.6);font-family:sans-serif;font-size:13px">Memuat video...</p>
+</div>
+<div id="err">
+  <span style="font-size:32px">😞</span>
+  <p style="font-size:15px">Video tidak dapat dimuat</p>
+  <p style="font-size:12px;color:rgba(255,255,255,.5)" id="errMsg"></p>
+</div>
 <div id="info">
-  <span id="ttl">{{ title }}</span>
-  <span id="ep">Ep {{ ep }}</span>
+  <span>{{ title }}</span>
+  <span id="ep-badge">Ep {{ ep }}</span>
 </div>
 <div id="wrap">
-  <iframe id="fr" 
-    src="/smartproxy?url={{ src_encoded }}&base={{ base_encoded }}"
-    allowfullscreen
-    allow="autoplay; fullscreen; picture-in-picture"
-    scrolling="no">
-  </iframe>
+  <video id="vid" playsinline webkit-playsinline controls></video>
 </div>
-<button id="fsBtn" onclick="fs()">⛶ Fullscreen</button>
+<div id="controls">
+  <button id="fsBtn" onclick="fs()">⛶ Fullscreen</button>
+</div>
 <script>
-function fs(){
-  var el=document.getElementById('wrap');
-  if(el.requestFullscreen) el.requestFullscreen();
-  else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-  else if(el.mozRequestFullScreen) el.mozRequestFullScreen();
-  else{
-    var fr=document.getElementById('fr');
-    if(fr.requestFullscreen) fr.requestFullscreen();
-    else if(fr.webkitRequestFullscreen) fr.webkitRequestFullscreen();
+var src = "{{ src }}";
+var vid = document.getElementById('vid');
+var loading = document.getElementById('loading');
+var errDiv = document.getElementById('err');
+
+function showErr(msg){
+  loading.classList.add('hidden');
+  errDiv.classList.add('show');
+  document.getElementById('errMsg').textContent = msg || '';
+}
+
+function initPlayer(){
+  if(Hls.isSupported()){
+    var hls = new Hls({
+      enableWorker: true,
+      lowLatencyMode: false,
+      xhrSetup: function(xhr, url){
+        xhr.setRequestHeader('Origin', '');
+      }
+    });
+    hls.loadSource(src);
+    hls.attachMedia(vid);
+    hls.on(Hls.Events.MANIFEST_PARSED, function(){
+      loading.classList.add('hidden');
+      vid.play().catch(function(){});
+    });
+    hls.on(Hls.Events.ERROR, function(e, data){
+      if(data.fatal) showErr(data.type + ': ' + data.details);
+    });
+  } else if(vid.canPlayType('application/vnd.apple.mpegurl')){
+    vid.src = src;
+    vid.addEventListener('loadedmetadata', function(){
+      loading.classList.add('hidden');
+      vid.play().catch(function(){});
+    });
+    vid.addEventListener('error', function(){
+      showErr('Format tidak didukung browser ini');
+    });
+  } else {
+    showErr('Browser tidak support HLS');
   }
 }
-// Auto hide info bar
-var t;
-document.addEventListener('touchstart',function(){
+
+initPlayer();
+
+function fs(){
+  var el = document.getElementById('wrap');
+  if(el.requestFullscreen) el.requestFullscreen();
+  else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  else if(vid.webkitEnterFullscreen) vid.webkitEnterFullscreen();
+}
+
+// Auto hide controls
+var hideTimer;
+function showControls(){
   document.getElementById('info').style.opacity='1';
-  clearTimeout(t);
-  t=setTimeout(function(){document.getElementById('info').style.opacity='0';},3000);
-});
-// Try auto fullscreen on first tap
-var firstTap=true;
-document.getElementById('wrap').addEventListener('click',function(){
-  if(firstTap){firstTap=false;fs();}
-});
+  document.getElementById('controls').style.opacity='1';
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(function(){
+    document.getElementById('info').style.opacity='0';
+    document.getElementById('controls').style.opacity='0';
+  }, 3000);
+}
+document.addEventListener('touchstart', showControls);
+document.addEventListener('mousemove', showControls);
 </script>
 </body>
 </html>"""
-
-
-def rewrite_urls(content, base_url, proxy_base):
-    """Rewrite semua URL di HTML supaya lewat proxy."""
-    parsed = urllib.parse.urlparse(base_url)
-    origin = f"{parsed.scheme}://{parsed.netloc}"
-    
-    def make_proxy_url(url):
-        if not url or url.startswith('data:') or url.startswith('#') or url.startswith('javascript:'):
-            return url
-        if url.startswith('//'):
-            url = parsed.scheme + ':' + url
-        elif url.startswith('/'):
-            url = origin + url
-        elif not url.startswith('http'):
-            url = origin + '/' + url
-        # Cek apakah domain iklan
-        for ad in AD_DOMAINS:
-            if ad in url:
-                return 'about:blank'
-        return f"{proxy_base}?url={urllib.parse.quote(url, safe='')}&base={urllib.parse.quote(origin, safe='')}"
-    
-    # Rewrite src dan href
-    def replace_src(m):
-        attr = m.group(1)
-        url = m.group(2)
-        new_url = make_proxy_url(url)
-        return f'{attr}="{new_url}"'
-    
-    content = re.sub(r'(src)=["\']([^"\']+)["\']', replace_src, content)
-    content = re.sub(r'(href)=["\']([^"\'#javascript][^"\']*)["\']', replace_src, content)
-    
-    return content
-
-
-def strip_ads_from_html(content):
-    """Strip iklan dari HTML."""
-    # Hapus script dari domain iklan
-    for domain in AD_DOMAINS:
-        de = domain.replace('.', r'\.')
-        content = re.sub(rf'<script[^>]*src=["\'][^"\']*{de}[^"\']*["\'][^>]*>.*?</script>', 
-                        '', content, flags=re.IGNORECASE|re.DOTALL)
-
-    # Hapus meta redirect
-    content = re.sub(r'<meta[^>]*http-equiv=["\']refresh["\'][^>]*>', '', content, flags=re.IGNORECASE)
-    
-    # Inject ad blocker
-    if '</head>' in content:
-        content = content.replace('</head>', AD_BLOCKER_JS + '</head>', 1)
-    else:
-        content = AD_BLOCKER_JS + content
-    
-    return content
 
 
 @app.route("/", methods=["GET"])
@@ -246,56 +167,33 @@ def watch():
     src = request.args.get("src", "")
     title = request.args.get("title", "Drama")
     ep = request.args.get("ep", "1")
-    parsed = urllib.parse.urlparse(src)
-    base = f"{parsed.scheme}://{parsed.netloc}"
-    src_encoded = urllib.parse.quote(src, safe="")
-    base_encoded = urllib.parse.quote(base, safe="")
-    return render_template_string(PLAYER_HTML, title=title, ep=ep, 
-                                   src_encoded=src_encoded, base_encoded=base_encoded)
+    return render_template_string(PLAYER_HTML, title=title, ep=ep, src=src)
 
 
-@app.route("/smartproxy", methods=["GET"])
-def smart_proxy():
+@app.route("/proxy", methods=["GET"])
+def proxy():
+    """Proxy untuk file m3u8 dan ts supaya bypass hotlink."""
     url = request.args.get("url", "")
-    base = request.args.get("base", "")
     if not url:
         return "URL tidak ditemukan", 400
     try:
+        referer = request.args.get("ref", "https://playeriframe.sbs/")
         headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
-            "Referer": base or "https://playeriframe.sbs/",
-            "Origin": base or "https://playeriframe.sbs",
-            "Accept": "*/*",
-            "Accept-Language": "id-ID,id;q=0.9,en;q=0.8",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
+            "Referer": referer,
+            "Origin": urllib.parse.urlparse(referer).scheme + "://" + urllib.parse.urlparse(referer).netloc,
         }
-        resp = req_lib.get(url, headers=headers, timeout=20, allow_redirects=True)
-        excluded = ['content-encoding','content-length','transfer-encoding',
-                    'connection','x-frame-options','content-security-policy',
-                    'x-content-type-options','strict-transport-security']
+        resp = req_lib.get(url, headers=headers, timeout=20, stream=True)
+        excluded = ['content-encoding','transfer-encoding','connection',
+                    'x-frame-options','content-security-policy']
         resp_headers = {k:v for k,v in resp.headers.items() if k.lower() not in excluded}
+        resp_headers['Access-Control-Allow-Origin'] = '*'
         
-        content_type = resp.headers.get('content-type','')
-        
-        if 'text/html' in content_type:
-            content = resp.text
-            proxy_base = request.host_url.rstrip('/') + '/smartproxy'
-            content = strip_ads_from_html(content)
-            content = rewrite_urls(content, url, proxy_base)
-            return Response(content, status=resp.status_code,
-                           content_type=content_type, headers=resp_headers)
-        elif 'javascript' in content_type or 'text/css' in content_type:
-            content = resp.text
-            # Blokir domain iklan di JS
-            for domain in AD_DOMAINS:
-                content = re.sub(rf'https?://[^\s"\']*{re.escape(domain)}[^\s"\']*', 
-                                'about:blank', content)
-            return Response(content, status=resp.status_code,
-                           content_type=content_type, headers=resp_headers)
-        else:
-            return Response(resp.content, status=resp.status_code,
-                           content_type=content_type, headers=resp_headers)
+        return Response(resp.iter_content(chunk_size=8192),
+                       status=resp.status_code,
+                       content_type=resp.headers.get('content-type','application/octet-stream'),
+                       headers=resp_headers)
     except Exception as e:
-        logger.error(f"Proxy error: {e}")
         return f"Error: {str(e)}", 500
 
 
